@@ -1,35 +1,87 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"net/http"
+	"io"
+	"log"
+	"os"
+	"sort"
+	"strings"
+	"sync"
+
+	"github.com/mjnovice/teamfinder/finder"
+	"github.com/mjnovice/teamfinder/team"
 )
 
-const (
-	URLFormat = "https://vintagemonster.onefootball.com/api/teams/en/%d.json"
-)
+func findPlayersParallely(batchSize, idBoundHigh uint64, teams map[string]bool) []team.Player {
+	playersChan := make(chan team.Player, 1000000)
+	wg := &sync.WaitGroup{}
+	var i uint64
+	for i = 1; i <= idBoundHigh; i += batchSize {
+		wg.Add(1)
+		go func(i uint64, wg *sync.WaitGroup) {
+			defer wg.Done()
+			players := finder.FindPlayersWithinBounds(i, i+batchSize-1, teams)
+			for _, player := range players {
+				playersChan <- player
+			}
+		}(i, wg)
+	}
+	wg.Wait()
+	close(playersChan)
+	players := []team.Player{}
+	for player := range playersChan {
+		players = append(players, player)
+	}
+	return players
+}
 
-func GetData(teamid uint64) (*team.TeamDataResponse, error) {
-	url = fmt.Sprintf(URLFormat, teamid)
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, err
+func printPlayers(players []team.Player) {
+	n := len(players)
+	for i := 0; i < n; {
+		playerName := players[i].Name
+		out := fmt.Sprintf("%d. %s; %s; ", i, players[i].Name, players[i].Age)
+		for j := i; j < n; j++ {
+			if players[j].Name == playerName {
+				out += players[j].PlayingFor + ", "
+				i++
+			} else {
+				break
+			}
+		}
+		out = strings.TrimSuffix(out, ", ")
+		fmt.Println(out)
 	}
-	defer resp.Body.Close()
-	data, err := ioutil.ReadAll(resp)
-	if err != nil {
-		return nil, err
-	}
-	teamDataObj := &TeamDataResponse{}
-	err := json.Unmarshal(teamData, teamDataObj)
-	if err != nil {
-		return nil, err
-	}
-	return teamDataObj, nil
 }
 
 func main() {
-	GetData(12)
+	teamNames := map[string]bool{
+		"Germany":          true,
+		"England":          true,
+		"France":           true,
+		"Spain":            true,
+		"Manchester Utd":   true,
+		"Arsenal":          true,
+		"Chelsea":          true,
+		"Barcelona":        true,
+		"Real Madrid":      true,
+		"FC Bayern Munich": true,
+	}
+
+	var w io.Writer
+
+	//dummy output buffer to suppress debug logs.
+	_, w, _ = os.Pipe()
+
+	//w = os.Stdout
+	log.SetOutput(w)
+
+	limit := finder.FindUpperBound()
+	log.Println("Limit foud! ", limit)
+
+	players := findPlayersParallely(300, limit, teamNames)
+	log.Println("Total players found", len(players))
+
+	sort.Sort(team.PlayerSorter(players))
+	printPlayers(players)
 }
