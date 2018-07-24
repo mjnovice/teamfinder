@@ -1,3 +1,6 @@
+## How to Run ? 
+```go run main.go```
+
 # finder
 --
     import "github.com/mjnovice/teamfinder/finder"
